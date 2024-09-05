@@ -19,59 +19,45 @@ fi
 echo "Cập nhật hệ thống..."
 apt update && apt upgrade -y
 
-# Cài đặt Certbot và plugin cho Nginx
-echo "Cài đặt Certbot và plugin cho Nginx..."
-apt install certbot python3-certbot-nginx -y
-
-# Cấu hình tường lửa (nếu sử dụng UFW)
-if command -v ufw &> /dev/null; then
-  echo "Cấu hình tường lửa..."
-  ufw allow 'Nginx Full'
+# Cài đặt acme.sh nếu chưa cài
+if ! command -v acme.sh &> /dev/null; then
+  echo "Cài đặt acme.sh..."
+  curl https://get.acme.sh | sh
+  source ~/.bashrc
 fi
 
-# Kiểm tra xem thư mục chứa chứng chỉ đã tồn tại hay chưa
-SSL_DIR="/etc/nginx/ssl"
-if [ ! -d "$SSL_DIR" ]; then
-  mkdir -p "$SSL_DIR"
+# Đăng ký tài khoản (Let’s Encrypt hoặc ZeroSSL)
+echo "Đăng ký tài khoản Freessl (qua Let's Encrypt hoặc ZeroSSL)..."
+read -p "Bạn muốn sử dụng ZeroSSL không? (y/n): " USE_ZEROSSL
+if [ "$USE_ZEROSSL" = "y" ]; then
+  acme.sh --register-account --accountemail "youremail@example.com" --server zerossl
+  SERVER="zerossl"
+else
+  acme.sh --register-account --accountemail "youremail@example.com"
+  SERVER="letsencrypt"
 fi
 
-# Lấy chứng chỉ SSL từ Let's Encrypt
+# Lấy chứng chỉ SSL từ Freessl.org
 echo "Lấy chứng chỉ SSL cho $DOMAIN..."
-certbot --nginx -d "$DOMAIN" -d "www.$DOMAIN"
+acme.sh --issue -d "$DOMAIN" -d "www.$DOMAIN" --nginx --server "$SERVER"
 
-# Kiểm tra nếu quá trình lấy chứng chỉ thất bại
-if [ $? -ne 0 ]; then
-  echo "Lỗi: Không thể lấy chứng chỉ SSL cho $DOMAIN."
-  exit 1
-fi
+# Tạo thư mục SSL nếu chưa tồn tại
+mkdir -p /etc/nginx/ssl
 
-# Cài đặt chứng chỉ SSL vào Nginx (sao lưu file cấu hình)
+# Cài đặt chứng chỉ SSL vào Nginx
 echo "Cài đặt chứng chỉ SSL vào Nginx..."
-if [ -f "/etc/nginx/sites-available/$DOMAIN" ]; then
-  cp "/etc/nginx/sites-available/$DOMAIN" "/etc/nginx/sites-available/${DOMAIN}.bak"
-fi
+acme.sh --install-cert -d "$DOMAIN" \
+--key-file /etc/nginx/ssl/$DOMAIN.key \
+--fullchain-file /etc/nginx/ssl/$DOMAIN.cer \
+--reloadcmd "systemctl reload nginx"
 
 # Cấu hình gia hạn tự động
 echo "Cấu hình gia hạn tự động..."
-systemctl enable certbot.timer
-systemctl start certbot.timer
-
-# Kiểm tra trạng thái gia hạn tự động
-echo "Kiểm tra trạng thái gia hạn tự động..."
-systemctl status certbot.timer
-
-# Kiểm tra gia hạn thủ công (nếu cần)
-echo "Chạy thử gia hạn thủ công..."
-certbot renew --dry-run
+acme.sh --upgrade --auto-upgrade
+acme.sh --install-cronjob
 
 # Khởi động lại Nginx
 echo "Khởi động lại Nginx..."
 systemctl reload nginx
 
-# Kiểm tra Nginx có khởi động thành công không
-if [ $? -ne 0 ]; then
-  echo "Lỗi: Khởi động lại Nginx thất bại."
-  exit 1
-fi
-
-echo "Hoàn thành! SSL đã được cài đặt và cấu hình cho $DOMAIN."
+echo "Hoàn thành! SSL đã được cài đặt cho $DOMAIN từ Freessl.org."
