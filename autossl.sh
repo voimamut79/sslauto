@@ -29,9 +29,32 @@ if command -v ufw &> /dev/null; then
   ufw allow 'Nginx Full'
 fi
 
+# Kiểm tra xem thư mục chứa chứng chỉ đã tồn tại hay chưa
+SSL_DIR="/etc/nginx/ssl"
+if [ ! -d "$SSL_DIR" ]; then
+  mkdir -p "$SSL_DIR"
+fi
+
 # Lấy chứng chỉ SSL từ Let's Encrypt
 echo "Lấy chứng chỉ SSL cho $DOMAIN..."
 certbot --nginx -d "$DOMAIN" -d "www.$DOMAIN"
+
+# Kiểm tra nếu quá trình lấy chứng chỉ thất bại
+if [ $? -ne 0 ]; then
+  echo "Lỗi: Không thể lấy chứng chỉ SSL cho $DOMAIN."
+  exit 1
+fi
+
+# Cài đặt chứng chỉ SSL vào Nginx (sao lưu file cấu hình)
+echo "Cài đặt chứng chỉ SSL vào Nginx..."
+if [ -f "/etc/nginx/sites-available/$DOMAIN" ]; then
+  cp "/etc/nginx/sites-available/$DOMAIN" "/etc/nginx/sites-available/${DOMAIN}.bak"
+fi
+
+# Cấu hình gia hạn tự động
+echo "Cấu hình gia hạn tự động..."
+systemctl enable certbot.timer
+systemctl start certbot.timer
 
 # Kiểm tra trạng thái gia hạn tự động
 echo "Kiểm tra trạng thái gia hạn tự động..."
@@ -45,4 +68,10 @@ certbot renew --dry-run
 echo "Khởi động lại Nginx..."
 systemctl reload nginx
 
-echo "Hoàn thành! SSL đã được cài đặt cho $DOMAIN."
+# Kiểm tra Nginx có khởi động thành công không
+if [ $? -ne 0 ]; then
+  echo "Lỗi: Khởi động lại Nginx thất bại."
+  exit 1
+fi
+
+echo "Hoàn thành! SSL đã được cài đặt và cấu hình cho $DOMAIN."
